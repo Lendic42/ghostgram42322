@@ -51,19 +51,11 @@ jobs:
             /Applications/Xcode_26.2.app \
             /Applications/Xcode_26.2.0.app \
             || true
+          # Simulator *runtimes* live outside the Xcode bundle. The SDK directories
+          # inside Xcode must stay: rules_swift scans iPhoneSimulator.sdk even for a
+          # device build, and a missing include directory aborts analysis.
           sudo rm -rf /Library/Developer/CoreSimulator || true
           sudo rm -rf "$HOME/Library/Developer/CoreSimulator" || true
-          XCODE=/Applications/Xcode_27.1.app/Contents/Developer/Platforms
-          if [ -d "$XCODE" ]; then
-            sudo rm -rf \
-              "$XCODE/AppleTVOS.platform" \
-              "$XCODE/AppleTVSimulator.platform" \
-              "$XCODE/WatchSimulator.platform" \
-              "$XCODE/XROS.platform" \
-              "$XCODE/XRSimulator.platform" \
-              "$XCODE/iPhoneSimulator.platform" \
-              || true
-          fi
           sudo rm -rf /usr/local/lib/android "$HOME/Library/Android" || true
           sudo rm -rf /Users/runner/hostedtoolcache /opt/hostedtoolcache || true
           sudo rm -rf /usr/local/share/dotnet /usr/share/dotnet "$HOME/.dotnet" || true
