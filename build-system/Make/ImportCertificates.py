@@ -28,7 +28,14 @@ def import_certificates(certificatesPath):
     ], check_result=True)
 
     existing_keychains = run_executable_with_output('security', arguments=['list-keychains', '-d', 'user'])
-    existing_keychains.replace('"', '')
+    # list-keychains prints one quoted path per line. Pass each path as its own
+    # argument; the previous code dropped the quote-stripping result and handed
+    # the whole block to -s as a single argv, which a fresh CI keychain rejects.
+    existing_paths = []
+    for line in existing_keychains.splitlines():
+        path = line.strip().strip('"')
+        if path and path not in existing_paths and not path.endswith(keychain_name):
+            existing_paths.append(path)
 
     run_executable_with_output('security', arguments=[
         'list-keychains',
@@ -36,9 +43,9 @@ def import_certificates(certificatesPath):
         'user',
         '-s',
         keychain_name,
-        existing_keychains
-    ], check_result=True)
+    ] + existing_paths, check_result=True)
 
+    run_executable_with_output('security', arguments=['default-keychain', '-s', keychain_name], check_result=True)
     run_executable_with_output('security', arguments=['set-keychain-settings', keychain_name])
     run_executable_with_output('security', arguments=['unlock-keychain', '-p', keychain_password, keychain_name])
 
@@ -71,10 +78,13 @@ def import_certificates(certificatesPath):
         '/usr/bin/security'
     ], check_result=False)
 
+    # codesign: is required on a headless runner. Without it the key is in the
+    # keychain but codesign exits "User interaction is not allowed".
     run_executable_with_output('security', arguments=[
         'set-key-partition-list',
         '-S',
-        'apple-tool:,apple:',
+        'apple-tool:,apple:,codesign:',
+        '-s',
         '-k',
         keychain_password,
         keychain_name
