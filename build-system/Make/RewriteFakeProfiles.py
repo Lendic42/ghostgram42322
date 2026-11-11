@@ -58,6 +58,50 @@ def transform_profile(profile, old_bundle_id, new_bundle_id, certificate_der):
     return profile
 
 
+def pkcs12_pem(p12_path):
+    """Certificate and private key as PEM. The committed p12 is RC2-40."""
+    attempts = [
+        ['openssl', 'pkcs12', '-in', p12_path, '-passin', 'pass:', '-nodes', '-legacy'],
+        ['openssl', 'pkcs12', '-in', p12_path, '-passin', 'pass:', '-nodes'],
+    ]
+    errors = []
+    for command in attempts:
+        proc = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if proc.returncode == 0 and b'BEGIN CERTIFICATE' in proc.stdout and b'BEGIN' in proc.stdout:
+            return proc.stdout
+        errors.append(proc.stderr.decode('utf-8', errors='replace'))
+    sys.stderr.write('Could not read {}\n{}'.format(p12_path, '\n'.join(errors)))
+    sys.exit(1)
+
+
+def write_modern_p12(source_p12, destination_p12):
+    pem = pkcs12_pem(source_p12)
+    pem_path = destination_p12 + '.pem'
+    try:
+        with open(pem_path, 'wb') as pem_file:
+            pem_file.write(pem)
+        # openssl pkcs12 -export does not read the PEM from stdin.
+        proc = subprocess.run(
+            [
+                'openssl', 'pkcs12', '-export',
+                '-in', pem_path,
+                '-passout', 'pass:',
+                '-out', destination_p12,
+                '-certpbe', 'AES-256-CBC',
+                '-keypbe', 'AES-256-CBC',
+                '-macalg', 'SHA256',
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        if proc.returncode != 0:
+            sys.stderr.write(proc.stderr.decode('utf-8', errors='replace'))
+            sys.exit(1)
+    finally:
+        if os.path.exists(pem_path):
+            os.remove(pem_path)
+
+
 def certificate_der(p12_path):
     # OpenSSL 3 needs -legacy for this p12 (RC2-40). LibreSSL on macOS does not
     # have -legacy and reads the same file without it.
@@ -125,6 +169,9 @@ def main():
         path = os.path.join(source_certs, name)
         if os.path.isfile(path):
             shutil.copyfile(path, os.path.join(dest_certs, name))
+    # macOS 27's Security framework rejects the committed p12 (RC2-40). Re-export
+    # it with AES so `security import` keeps the private key.
+    write_modern_p12(p12_path, os.path.join(dest_certs, 'SelfSigned.p12'))
 
     der, common_name = certificate_der(p12_path)
     print('Signing identity: {}'.format(common_name))

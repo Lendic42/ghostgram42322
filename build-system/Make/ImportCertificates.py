@@ -52,18 +52,23 @@ def import_certificates(certificatesPath):
     for file_name in os.listdir(certificatesPath):
         file_path = certificatesPath + '/' + file_name
         if file_path.endswith('.p12') or file_path.endswith('.cer'):
-            run_executable_with_output('security', arguments=[
+            # -A lets codesign use the key with no extra ACL prompt. A .p12 that
+            # fails to import must stop the build; a .cer warning must not.
+            imported = run_executable_with_output('security', arguments=[
                 'import',
                 file_path,
                 '-k',
                 keychain_name,
                 '-P',
                 '',
+                '-A',
                 '-T',
                 '/usr/bin/codesign',
                 '-T',
                 '/usr/bin/security'
-            ], check_result=False)
+            ], check_result=file_path.endswith('.p12'))
+            if imported:
+                print(imported)
 
     run_executable_with_output('security', arguments=[
         'import',
@@ -89,6 +94,40 @@ def import_certificates(certificatesPath):
         keychain_password,
         keychain_name
     ], check_result=True)
+
+    # The fake certificate is self-signed. `security find-identity -v` (what
+    # rules_apple uses to match the profile) hides it until it is trusted for
+    # code signing. sudo -n fails instead of waiting for a password.
+    for file_name in os.listdir(certificatesPath):
+        if not file_name.endswith('.cer'):
+            continue
+        trusted = run_executable_with_output('sudo', arguments=[
+            '-n',
+            'security',
+            'add-trusted-cert',
+            '-d',
+            '-r',
+            'trustRoot',
+            '-p',
+            'codeSign',
+            '-k',
+            '/Library/Keychains/System.keychain',
+            certificatesPath + '/' + file_name,
+        ], check_result=False)
+        print(trusted)
+
+    print('--- codesigning identities (valid) ---')
+    valid = run_executable_with_output('security', arguments=[
+        'find-identity', '-v', '-p', 'codesigning', keychain_name
+    ], check_result=False)
+    print(valid)
+    print('--- codesigning identities (all) ---')
+    print(run_executable_with_output('security', arguments=[
+        'find-identity', '-p', 'codesigning', keychain_name
+    ], check_result=False))
+    if '0 valid identities found' in valid:
+        print('No valid codesigning identity. The device build cannot sign the IPA.')
+        sys.exit(1)
 
 
 if __name__ == '__main__':

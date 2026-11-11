@@ -65,6 +65,8 @@ jobs:
               || true
           fi
           sudo rm -rf /usr/local/lib/android "$HOME/Library/Android" || true
+          sudo rm -rf /Users/runner/hostedtoolcache /opt/hostedtoolcache || true
+          sudo rm -rf /usr/local/share/dotnet /usr/share/dotnet "$HOME/.dotnet" || true
           rm -rf "$HOME/Library/Caches/Homebrew" || true
           df -h / /Users || true
 
@@ -177,10 +179,22 @@ jobs:
           # The hosted runner has 3 cores and 7 GB. Whole-module Swift and fat
           # Rust LTO do not fit. Flags after Make.py's own configuration override
           # dSYM generation (it is most of the disk and none of the sideload).
+          # Bazel 9 names these --local_resources. A disk cache duplicates
+          # bazel-out; this image has about 56 GB free after checkout, which is
+          # the build itself, so the cache is only turned on when more is free.
+          avail_kb=$(df -k /Users | awk 'NR==2 {print $4}')
+          avail_gb=$((avail_kb / 1024 / 1024))
+          echo "Free space before build: ${avail_gb}G"
+          CACHE_ARGS=()
+          if [ "$avail_gb" -ge 80 ]; then
+            CACHE_ARGS=(--cacheDir "${HOME}/telegram-bazel-cache")
+          else
+            echo "Not passing --cacheDir; ${avail_gb}G free cannot hold bazel-out and a disk cache."
+          fi
           BAZEL_ARGS=(
             --jobs=2
-            --local_cpu_resources=2
-            --local_ram_resources=5000
+            --local_resources=cpu=2
+            --local_resources=memory=5000
             --curses=no
             --color=no
             --discard_analysis_cache
@@ -191,14 +205,14 @@ jobs:
             --features=-swift.opt_uses_wmo
             --apple_generate_dsym=false
             --output_groups=-dsyms
-            --experimental_disk_cache_gc_max_size=20G
+            --experimental_disk_cache_gc_max_size=8G
             --experimental_disk_cache_gc_idle_delay=30s
             --@build_bazel_rules_swift//swift:copt=-j
             --@build_bazel_rules_swift//swift:copt=1
           )
           python3 -u build-system/Make/Make.py \
             --overrideXcodeVersion \
-            --cacheDir "${HOME}/telegram-bazel-cache" \
+            "${CACHE_ARGS[@]}" \
             --bazelArguments "${BAZEL_ARGS[*]}" \
             build \
             --configurationPath build-system/ghostgram-configuration.json \
