@@ -210,9 +210,11 @@ jobs:
             --@build_bazel_rules_swift//swift:copt=-j
             --@build_bazel_rules_swift//swift:copt=1
           )
+          # macOS ships bash 3.2, where "${empty[@]}" is unbound under set -u.
+          set +u
           python3 -u build-system/Make/Make.py \
             --overrideXcodeVersion \
-            "${CACHE_ARGS[@]}" \
+            ${CACHE_ARGS[@]+"${CACHE_ARGS[@]}"} \
             --bazelArguments "${BAZEL_ARGS[*]}" \
             build \
             --configurationPath build-system/ghostgram-configuration.json \
