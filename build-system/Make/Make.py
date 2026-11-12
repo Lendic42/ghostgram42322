@@ -321,6 +321,9 @@ class BazelCommandLine:
         combined_arguments += self.configuration_args
         if self.profile_swift:
             combined_arguments += ['--config=swift_profile']
+        # Appended last so a caller can override configuration flags (dSYM, LTO, jobs).
+        if self.additional_args:
+            combined_arguments += self.additional_args
 
         print('TelegramBuild: running')
         print(subprocess.list2cmdline(combined_arguments))
@@ -653,6 +656,9 @@ def build(bazel, arguments):
 
     bazel_command_line.set_split_swiftmodules(arguments.enableParallelSwiftmoduleGeneration)
 
+    if getattr(arguments, 'bazelArguments', None):
+        bazel_command_line.add_additional_args(shlex.split(arguments.bazelArguments))
+
     bazel_command_line.invoke_build()
 
     if arguments.outputBuildArtifactsPath is not None:
@@ -675,17 +681,20 @@ def build(bazel, arguments):
         shutil.copyfile(ipa_paths[0], artifacts_path + '/Telegram.ipa')
 
         dsym_paths = glob.glob('bazel-bin/Telegram/*.dSYM')
-        for dsym_path in dsym_paths:
-            file_name = os.path.basename(dsym_path)
-            shutil.copytree(dsym_path, artifacts_path + '/DSYMs/{}'.format(file_name))
-        previous_directory = os.getcwd()
-        os.chdir(artifacts_path)
-        run_executable_with_output('zip', arguments=[
-            '-r',
-            'Telegram.DSYMs.zip',
-            './DSYMs'
-        ], check_result=True)
-        os.chdir(previous_directory)
+        if dsym_paths:
+            for dsym_path in dsym_paths:
+                file_name = os.path.basename(dsym_path)
+                shutil.copytree(dsym_path, artifacts_path + '/DSYMs/{}'.format(file_name))
+            previous_directory = os.getcwd()
+            os.chdir(artifacts_path)
+            run_executable_with_output('zip', arguments=[
+                '-r',
+                'Telegram.DSYMs.zip',
+                './DSYMs'
+            ], check_result=True)
+            os.chdir(previous_directory)
+        else:
+            print('TelegramBuild: no dSYM bundles were produced')
         shutil.rmtree(artifacts_path + '/DSYMs')
 
 

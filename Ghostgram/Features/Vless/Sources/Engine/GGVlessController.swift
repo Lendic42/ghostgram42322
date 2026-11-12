@@ -140,9 +140,10 @@ public final class GGVlessController {
         if let pending = self.pendingProxyUpdate {
             self.pendingProxyUpdate = nil
             self.applyProxy(enable: pending)
-        } else if !GGVlessSettings.enabled.value {
-            // A loopback entry left without a running VPN (the old client, a crash) would keep
-            // Telegram offline: give the proxy back.
+        } else if !GGVlessSettings.enabled.value || GGVlessSettings.selectedServer.value.isEmpty {
+            // A loopback entry left without a running core (the old client, a crash, a sideload
+            // that never configured a server) sends every MTProto connection to 127.0.0.1.
+            // Login then reports a network error while the system VPN is fine.
             self.applyProxy(enable: false)
         }
     }

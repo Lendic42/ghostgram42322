@@ -5,10 +5,11 @@ import subprocess
 import sys
 
 def is_apple_silicon():
-    if platform.processor() == 'arm':
-        return True
-    else:
-        return False
+    # platform.processor() is 'arm' on some Python builds and empty on others;
+    # platform.machine() is 'arm64' on GitHub's macOS runners and on Apple Silicon.
+    machine = platform.machine().lower()
+    processor = platform.processor().lower()
+    return machine in ('arm64', 'aarch64') or processor in ('arm', 'arm64', 'aarch64')
 
 
 def get_clean_env(use_clean_env=True):

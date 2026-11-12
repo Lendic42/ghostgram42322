@@ -1217,6 +1217,7 @@ swift_library(
     ],
     deps = [
         "//submodules/TelegramUI:TelegramUI",
+        "//submodules/TelegramCore",
         "//submodules/PasscodeCore",
         ":NotificationContentExtensionLink",
     ],

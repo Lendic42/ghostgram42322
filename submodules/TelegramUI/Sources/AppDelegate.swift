@@ -320,7 +320,12 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
         let appGroupName = "group.\(baseAppBundleId)"
 
         let configuration = URLSessionConfiguration.background(withIdentifier: identifier)
-        configuration.sharedContainerIdentifier = appGroupName
+        // A background session whose shared container is an app group the process is not
+        // entitled to never delivers its events. Omit the identifier and keep the session
+        // in this process's sandbox.
+        if FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupName) != nil {
+            configuration.sharedContainerIdentifier = appGroupName
+        }
         configuration.isDiscretionary = false
         let session = URLSession(configuration: configuration, delegate: self, delegateQueue: .main)
         self.urlSessions.append(session)
@@ -574,11 +579,17 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
         try! PasscodeEnvironment.shared.configure(PasscodeConfiguration(appGroupIdentifier: appGroupName, processRole: .mainApp, biometricKeychainService: walletBiometricKeychainService), privateAccessGroup: {
             BuildConfig.keychainAccessGroup(baseAppBundleId: baseAppBundleId)
         })
-        let maybeAppGroupUrl = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupName)
+        // GHOST: a free Apple ID sideload has no app group. containerURL is nil and the
+        // previous "Error 2" return left a black window. Store accounts in this process's
+        // own Application Support instead.
+        let appGroupUrl = resolvedAppGroupContainerURL(groupIdentifier: appGroupName)
         
         let buildConfig = BuildConfig(baseAppBundleId: baseAppBundleId)
         self.buildConfig = buildConfig
-        let signatureDict = BuildConfigExtra.signatureDict()
+        // A free Apple ID signature is not Telegram's. Sending it with the official api_id makes
+        // the servers drop the session with no error, which the login screen reports as a network
+        // failure. The App Store build still sends the signature.
+        let signatureDict: [AnyHashable: Any]? = buildConfig.isAppStoreBuild ? BuildConfigExtra.signatureDict() : nil
         
         let apiId: Int32 = buildConfig.apiId
         let apiHash: String = buildConfig.apiHash
@@ -697,10 +708,6 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
             networkEngineFactory: RustNetworkEngineFactory()
         )
         
-        guard let appGroupUrl = maybeAppGroupUrl else {
-            self.mainWindow?.presentNative(UIAlertController(title: nil, message: "Error 2", preferredStyle: .alert))
-            return true
-        }
         // GHOST: Ghostgram core and feature modules, before the AccountManager and the accounts (FOUNDATION_SPEC §2)
         ggApplicationDidLaunch(appGroupPath: appGroupUrl.path)
         
@@ -786,6 +793,7 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
         let logsPath = rootPath + "/logs/app-logs"
         let _ = try? FileManager.default.createDirectory(atPath: logsPath, withIntermediateDirectories: true, attributes: nil)
         Logger.setSharedLogger(Logger(rootPath: rootPath, basePath: logsPath))
+        Logger.shared.log("App", "apiId=\(buildConfig.apiId) appStore=\(buildConfig.isAppStoreBuild) storage=\(appGroupUrl.path)")
 
         setManagedAudioSessionLogger({ s in
             Logger.shared.log("ManagedAudioSession", s)

@@ -581,21 +581,14 @@ func initializedNetwork(accountId: AccountRecordId, arguments: NetworkInitializa
             let context = MTContext(serialization: serialization, encryptionProvider: arguments.encryptionProvider, apiEnvironment: apiEnvironment, isTestingEnvironment: testingEnvironment, useTempAuthKeys: useTempAuthKeys)
             context.refreshesTemporaryKeys = !supplementary
             
-            if let networkSettings = networkSettings {
-                let useNetworkFramework: Bool
-                if let customValue = networkSettings.useNetworkFramework {
-                    useNetworkFramework = customValue
-                } else if arguments.useBetaFeatures {
-                    useNetworkFramework = true
-                } else {
-                    useNetworkFramework = false
-                }
-                
-                if useNetworkFramework {
-                    if #available(iOS 12.0, macOS 14.0, *) {
-                        context.makeTcpConnectionInterface = { delegate, delegateQueue in
-                            return NetworkFrameworkTcpConnectionInterface(delegate: delegate, delegateQueue: delegateQueue)
-                        }
+            // Network.framework is opt-in. A non-App-Store build sets useBetaFeatures, and the
+            // old default then selected NWConnection. That stack sets preferNoProxies and can sit
+            // in `waiting` forever while a VPN or system proxy is up (the App Store client uses
+            // GCDAsyncSocket and connects). Login then dies as "check your internet connection".
+            if networkSettings?.useNetworkFramework == true {
+                if #available(iOS 12.0, macOS 14.0, *) {
+                    context.makeTcpConnectionInterface = { delegate, delegateQueue in
+                        return NetworkFrameworkTcpConnectionInterface(delegate: delegate, delegateQueue: delegateQueue)
                     }
                 }
             }

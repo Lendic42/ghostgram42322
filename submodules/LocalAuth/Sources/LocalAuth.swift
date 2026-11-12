@@ -203,7 +203,12 @@ public struct LocalAuth {
         ]
         
         var maybePrivateKey: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &maybePrivateKey)
+        var status = SecItemCopyMatching(query as CFDictionary, &maybePrivateKey)
+        if status == errSecMissingEntitlement {
+            var fallback = query
+            fallback.removeValue(forKey: kSecAttrAccessGroup as String)
+            status = SecItemCopyMatching(fallback as CFDictionary, &maybePrivateKey)
+        }
         if status != errSecSuccess {
             return nil
         }
@@ -244,8 +249,13 @@ public struct LocalAuth {
             kSecAttrAccessGroup as String: accessGroup
         ]
         
-        let status = SecItemDelete(query as CFDictionary)
-        if status != errSecSuccess {
+        var status = SecItemDelete(query as CFDictionary)
+        if status == errSecMissingEntitlement {
+            var fallback = query
+            fallback.removeValue(forKey: kSecAttrAccessGroup as String)
+            status = SecItemDelete(fallback as CFDictionary)
+        }
+        if status != errSecSuccess && status != errSecItemNotFound {
             return false
         }
         return true
@@ -278,7 +288,18 @@ public struct LocalAuth {
             ] as [String: Any]
         ]
         var error: Unmanaged<CFError>?
-        let maybePrivateKey = SecKeyCreateRandomKey(attributes as CFDictionary, &error)
+        var maybePrivateKey = SecKeyCreateRandomKey(attributes as CFDictionary, &error)
+        if maybePrivateKey == nil {
+            let creationError = error?.takeRetainedValue()
+            error = nil
+            if (creationError as NSError?)?.code == Int(errSecMissingEntitlement) {
+                var fallback = attributes
+                var privateAttrs = fallback[kSecPrivateKeyAttrs as String] as? [String: Any] ?? [:]
+                privateAttrs.removeValue(forKey: kSecAttrAccessGroup as String)
+                fallback[kSecPrivateKeyAttrs as String] = privateAttrs
+                maybePrivateKey = SecKeyCreateRandomKey(fallback as CFDictionary, &error)
+            }
+        }
         if let error {
             error.release()
         }

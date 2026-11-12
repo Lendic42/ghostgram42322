@@ -147,11 +147,7 @@ class DefaultIntentHandler: INExtension, INSendMessageIntentHandling, INSearchFo
         
         let appGroupName = "group.\(baseAppBundleId)"
         try! PasscodeEnvironment.shared.configure(PasscodeConfiguration(appGroupIdentifier: appGroupName, processRole: .appExtension))
-        let maybeAppGroupUrl = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupName)
-        
-        guard let appGroupUrl = maybeAppGroupUrl else {
-            return
-        }
+        let appGroupUrl = resolvedAppGroupContainerURL(groupIdentifier: appGroupName)
         
         self.appGroupUrl = appGroupUrl
         ggSiriIntentsDidStart(appGroupPath: appGroupUrl.path) // GHOST: Ghostgram core and the shared part of the features (ghost mode for Siri reads), before any account opens
@@ -988,11 +984,7 @@ private final class WidgetIntentHandler {
         let baseAppBundleId = String(appBundleIdentifier[..<lastDotRange.lowerBound])
         
         let appGroupName = "group.\(baseAppBundleId)"
-        let maybeAppGroupUrl = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupName)
-        
-        guard let appGroupUrl = maybeAppGroupUrl else {
-            return
-        }
+        let appGroupUrl = resolvedAppGroupContainerURL(groupIdentifier: appGroupName)
         
         self.appGroupUrl = appGroupUrl
         

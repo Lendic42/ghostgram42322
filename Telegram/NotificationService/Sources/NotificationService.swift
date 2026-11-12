@@ -811,11 +811,7 @@ private final class NotificationServiceHandler {
 
         let appGroupName = "group.\(baseAppBundleId)"
         try! PasscodeEnvironment.shared.configure(PasscodeConfiguration(appGroupIdentifier: appGroupName, processRole: .appExtension))
-        let maybeAppGroupUrl = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupName)
-
-        guard let appGroupUrl = maybeAppGroupUrl else {
-            return nil
-        }
+        let appGroupUrl = resolvedAppGroupContainerURL(groupIdentifier: appGroupName)
 
         // GHOST: Ghostgram core and the shared part of the features, before any account opens (FOUNDATION_SPEC §2)
         ggNotificationServiceDidStart(appGroupPath: appGroupUrl.path)

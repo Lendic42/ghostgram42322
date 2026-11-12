@@ -1,0 +1,310 @@
+name: Build IPA
+
+# Unsigned device IPA for sideloading (Sideloadly / AltStore). No Apple secrets:
+# the committed fake certificate is re-signed onto org.ghostgram.app profiles.
+# versions.json pins Xcode 27.1, which is the default on the xcode-27 runner.
+
+on:
+  workflow_dispatch:
+  push:
+
+concurrency:
+  group: ghostgram-ipa-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  ipa:
+    name: Device IPA
+    runs-on: xcode-27
+    timeout-minutes: 360
+    env:
+      BUILD_NUMBER: ${{ github.run_number }}
+      BUNDLE_ID: org.ghostgram.app
+      TEAM_ID: C67CF9S4VU
+      # Public client id shipped in build-system/appstore-configuration.json.
+      # A repository variable overrides it without a secret.
+      GG_API_ID: ${{ vars.TELEGRAM_API_ID }}
+      GG_API_HASH: ${{ vars.TELEGRAM_API_HASH }}
+    steps:
+      - name: Free disk space
+        run: |
+          set -eux
+          df -h / /Users || true
+          ls -ld /Applications/Xcode*.app || true
+          # Keep Xcode 27.1 (versions.json). The other Xcodes and every simulator
+          # runtime are unused by a device build and are the largest things on the image.
+          sudo rm -rf \
+            /Applications/Xcode_27.0.app \
+            /Applications/Xcode_27.0.0.app \
+            /Applications/Xcode_27.2.app \
+            /Applications/Xcode_27.2.0.app \
+            /Applications/Xcode_27.app \
+            /Applications/Xcode_26.app \
+            /Applications/Xcode_26.0.app \
+            /Applications/Xcode_26.0.0.app \
+            /Applications/Xcode_26.1.app \
+            /Applications/Xcode_26.1.0.app \
+            /Applications/Xcode_26.2.app \
+            /Applications/Xcode_26.2.0.app \
+            || true
+          # Simulator *runtimes* live outside the Xcode bundle. The SDK directories
+          # inside Xcode must stay: rules_swift scans iPhoneSimulator.sdk even for a
+          # device build, and a missing include directory aborts analysis.
+          sudo rm -rf /Library/Developer/CoreSimulator || true
+          sudo rm -rf "$HOME/Library/Developer/CoreSimulator" || true
+          sudo rm -rf /usr/local/lib/android "$HOME/Library/Android" || true
+          sudo rm -rf /Users/runner/hostedtoolcache /opt/hostedtoolcache || true
+          sudo rm -rf /usr/local/share/dotnet /usr/share/dotnet "$HOME/.dotnet" || true
+          rm -rf "$HOME/Library/Caches/Homebrew" || true
+          df -h / /Users || true
+
+      - name: Select Xcode 27.1
+        run: |
+          set -eux
+          DEVELOPER=/Applications/Xcode_27.1.app/Contents/Developer
+          if [ ! -d "$DEVELOPER" ]; then
+            echo "Xcode 27.1 is not installed. Found:"
+            ls -ld /Applications/Xcode*.app || true
+            exit 1
+          fi
+          sudo xcode-select -s "$DEVELOPER"
+          xcodebuild -version
+          xcode-select -p
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Build the VLESS core if Go is available
+        id: vless
+        run: |
+          set -eu
+          included=false
+          GO_VERSION=1.26.11
+          GO_SHA256=e3a42e67a7a8acf450ebada2b074c7ca863000ca514907b7185b45e8f5cdff57
+          archive="${RUNNER_TEMP:-/tmp}/go.tgz"
+          if curl -fsSL "https://go.dev/dl/go${GO_VERSION}.darwin-arm64.tar.gz" -o "$archive" \
+              && echo "${GO_SHA256}  ${archive}" | shasum -a 256 -c - \
+              && sudo rm -rf /usr/local/go \
+              && sudo tar -C /usr/local -xzf "$archive"; then
+            echo "/usr/local/go/bin" >> "$GITHUB_PATH"
+            export PATH="/usr/local/go/bin:$PATH"
+            go version
+            if Ghostgram/Features/Vless/Core/build-core.sh; then
+              included=true
+            else
+              echo "VLESS core build failed; the app will say the core is not bundled."
+            fi
+          else
+            echo "Go ${GO_VERSION} could not be installed; skipping the VLESS core."
+          fi
+          echo "included=${included}" >> "$GITHUB_OUTPUT"
+
+      - name: Write the build configuration
+        run: |
+          set -eu
+          API_ID="${GG_API_ID:-8}"
+          API_HASH="${GG_API_HASH:-7245de8e747a0d6fbe11f7cc14fcc0bb}"
+          python3 - "$BUNDLE_ID" "$TEAM_ID" "$API_ID" "$API_HASH" <<'PY'
+          import json, sys
+          bundle_id, team_id, api_id, api_hash = sys.argv[1:5]
+          if not api_id.isdigit():
+              raise SystemExit("api_id must be an integer, got %r" % api_id)
+          config = {
+              "bundle_id": bundle_id,
+              "api_id": api_id,
+              "api_hash": api_hash,
+              "team_id": team_id,
+              "app_center_id": "0",
+              "is_internal_build": "false",
+              "is_appstore_build": "false",
+              "appstore_id": "0",
+              "app_specific_url_scheme": "tg",
+              "premium_iap_product_id": "",
+              "enable_siri": False,
+              "enable_icloud": False,
+          }
+          with open("build-system/ghostgram-configuration.json", "w") as fh:
+              json.dump(config, fh, indent=2)
+              fh.write("\n")
+          print(open("build-system/ghostgram-configuration.json").read())
+          PY
+
+      - name: Rewrite fake profiles for the Ghostgram bundle id
+        run: |
+          set -eux
+          python3 build-system/Make/RewriteFakeProfiles.py \
+            --bundle-id "$BUNDLE_ID" \
+            --destination "$RUNNER_TEMP/ghostgram-codesigning"
+          echo "CODESIGN=$RUNNER_TEMP/ghostgram-codesigning" >> "$GITHUB_ENV"
+
+      - name: Import the fake certificate
+        run: |
+          set -eux
+          python3 build-system/Make/ImportCertificates.py --path "$CODESIGN/certs"
+          security find-identity -v -p codesigning
+
+      - name: Restore Bazel disk cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/telegram-bazel-cache
+          key: bazel-disk-v1-${{ github.run_id }}
+          restore-keys: |
+            bazel-disk-v1-
+
+      - name: Apply submodule patches
+        run: |
+          set -eux
+          df -h / /Users || true
+          sysctl hw.memsize hw.ncpu || true
+          GG_PATCHES_ONLY=1 build-system/GGBuild.sh
+
+      - name: Build the device IPA
+        run: |
+          set -euxo pipefail
+          # The hosted runner has 3 cores and 7 GB. Whole-module Swift and fat
+          # Rust LTO do not fit. Flags after Make.py's own configuration override
+          # dSYM generation (it is most of the disk and none of the sideload).
+          # Bazel 9 names these --local_resources. A disk cache duplicates
+          # bazel-out; this image has about 56 GB free after checkout, which is
+          # the build itself, so the cache is only turned on when more is free.
+          avail_kb=$(df -k /Users | awk 'NR==2 {print $4}')
+          avail_gb=$((avail_kb / 1024 / 1024))
+          echo "Free space before build: ${avail_gb}G"
+          CACHE_ARGS=()
+          if [ "$avail_gb" -ge 80 ]; then
+            CACHE_ARGS=(--cacheDir "${HOME}/telegram-bazel-cache")
+          else
+            echo "Not passing --cacheDir; ${avail_gb}G free cannot hold bazel-out and a disk cache."
+          fi
+          BAZEL_ARGS=(
+            --jobs=2
+            --local_resources=cpu=2
+            --local_resources=memory=5000
+            --curses=no
+            --color=no
+            --discard_analysis_cache
+            --worker_max_instances=1
+            --experimental_total_worker_memory_limit_mb=4096
+            --experimental_shrink_worker_pool
+            --@rules_rust//rust/settings:lto=off
+            --features=-swift.opt_uses_wmo
+            --apple_generate_dsym=false
+            --output_groups=-dsyms
+            --experimental_disk_cache_gc_max_size=8G
+            --experimental_disk_cache_gc_idle_delay=30s
+            --@build_bazel_rules_swift//swift:copt=-j
+            --@build_bazel_rules_swift//swift:copt=1
+          )
+          # macOS ships bash 3.2, where "${empty[@]}" is unbound under set -u.
+          set +u
+          python3 -u build-system/Make/Make.py \
+            --overrideXcodeVersion \
+            ${CACHE_ARGS[@]+"${CACHE_ARGS[@]}"} \
+            --bazelArguments "${BAZEL_ARGS[*]}" \
+            build \
+            --configurationPath build-system/ghostgram-configuration.json \
+            --codesigningInformationPath "$CODESIGN" \
+            --buildNumber="$BUILD_NUMBER" \
+            --configuration=release_arm64 \
+            --outputBuildArtifactsPath build-output/ipa
+          test -f build-output/ipa/Telegram.ipa
+          mv -f build-output/ipa/Telegram.ipa build-output/ipa/Ghostgram.ipa
+          ls -lh build-output/ipa/Ghostgram.ipa
+          unzip -l build-output/ipa/Ghostgram.ipa | head -40
+          chmod +x build-system/GGSideloadIpa.sh
+          build-system/GGSideloadIpa.sh build-output/ipa/Ghostgram.ipa build-output/ipa/Ghostgram-sideload.ipa
+
+      - name: Upload the IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Ghostgram.ipa
+          path: build-output/ipa/Ghostgram.ipa
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      - name: Upload the sideload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Ghostgram-sideload.ipa
+          path: build-output/ipa/Ghostgram-sideload.ipa
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      - name: Save Bazel disk cache
+        if: always()
+        continue-on-error: true
+        run: |
+          set -eu
+          CACHE="${HOME}/telegram-bazel-cache"
+          if [ ! -d "$CACHE" ]; then
+            echo "No disk cache to save"
+            exit 0
+          fi
+          python3 - "$CACHE" <<'PY'
+          import os, sys
+          root = sys.argv[1]
+          limit = 8 * 1024 * 1024 * 1024
+          files = []
+          total = 0
+          for dirpath, _, names in os.walk(root):
+              for name in names:
+                  path = os.path.join(dirpath, name)
+                  try:
+                      st = os.stat(path)
+                  except OSError:
+                      continue
+                  files.append((st.st_mtime, st.st_size, path))
+                  total += st.st_size
+          print("cache bytes", total, "files", len(files))
+          if total <= limit:
+              raise SystemExit(0)
+          files.sort()
+          for mtime, size, path in files:
+              if total <= limit:
+                  break
+              try:
+                  os.remove(path)
+              except OSError:
+                  continue
+              total -= size
+          print("pruned to", total)
+          PY
+
+      - name: Upload pruned Bazel disk cache
+        if: always()
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: ~/telegram-bazel-cache
+          key: bazel-disk-v1-${{ github.run_id }}
+
+      - name: Sideload notes
+        if: always()
+        run: |
+          {
+            echo "## Ghostgram.ipa"
+            echo
+            echo "Bundle id \`$BUNDLE_ID\`, team \`$TEAM_ID\` (the fake certificate's team)."
+            echo "Build number \`$BUILD_NUMBER\`. Signature is the self-signed fake certificate; Sideloadly or AltStore must re-sign it."
+            echo
+            echo "VLESS core included: \`${{ steps.vless.outputs.included }}\`."
+            echo
+            echo "\`Ghostgram-sideload.ipa\` has PlugIns removed and no app-group or keychain-group entitlements. Use that one with a free Apple ID. \`Ghostgram.ipa\` still contains the extensions."
+            echo
+            echo "### Free Apple ID"
+            echo
+            echo "- The certificate lasts 7 days and a free account can only hold a few sideloaded apps."
+            echo "- Change the bundle id at install time if \`org.ghostgram.app\` is already registered to another team."
+            echo "- A free identity cannot sign the extensions inside the IPA: Share, Widget, Notification Service, Notification Content, Siri Intents, Broadcast Upload. Remove extensions in Sideloadly (or the install fails on those appexes)."
+            echo "- Push, App Groups, iCloud, Siri, associated domains and communication notifications are dropped on re-sign. Chats work; notification service, the share sheet and the widget do not."
+            echo "- \`api_id\` / \`api_hash\` are the public values from \`build-system/appstore-configuration.json\` unless the \`TELEGRAM_API_ID\` and \`TELEGRAM_API_HASH\` repository variables are set. Telegram may refuse unofficial clients that use the official id."
+          } >> "$GITHUB_STEP_SUMMARY"
