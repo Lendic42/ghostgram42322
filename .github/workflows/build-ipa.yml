@@ -218,12 +218,23 @@ jobs:
           mv -f build-output/ipa/Telegram.ipa build-output/ipa/Ghostgram.ipa
           ls -lh build-output/ipa/Ghostgram.ipa
           unzip -l build-output/ipa/Ghostgram.ipa | head -40
+          chmod +x build-system/GGSideloadIpa.sh
+          build-system/GGSideloadIpa.sh build-output/ipa/Ghostgram.ipa build-output/ipa/Ghostgram-sideload.ipa
 
       - name: Upload the IPA
         uses: actions/upload-artifact@v4
         with:
           name: Ghostgram.ipa
           path: build-output/ipa/Ghostgram.ipa
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      - name: Upload the sideload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Ghostgram-sideload.ipa
+          path: build-output/ipa/Ghostgram-sideload.ipa
           if-no-files-found: error
           retention-days: 30
           compression-level: 0
@@ -286,6 +297,8 @@ jobs:
             echo "Build number \`$BUILD_NUMBER\`. Signature is the self-signed fake certificate; Sideloadly or AltStore must re-sign it."
             echo
             echo "VLESS core included: \`${{ steps.vless.outputs.included }}\`."
+            echo
+            echo "\`Ghostgram-sideload.ipa\` has PlugIns removed and no app-group or keychain-group entitlements. Use that one with a free Apple ID. \`Ghostgram.ipa\` still contains the extensions."
             echo
             echo "### Free Apple ID"
             echo

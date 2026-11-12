@@ -360,10 +360,16 @@ public struct WidgetPresentationData: Codable, Equatable {
         let baseAppBundleId = String(appBundleIdentifier[..<lastDotRange.lowerBound])
         
         let appGroupName = "group.\(baseAppBundleId)"
-        let maybeAppGroupUrl = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupName)
-        
-        guard let appGroupUrl = maybeAppGroupUrl else {
-            return WidgetPresentationData.default
+        let appGroupUrl: URL
+        if let container = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupName) {
+            appGroupUrl = container
+        } else {
+            // No app group (sideload). This process cannot see the host app's container;
+            // read its own Application Support and fall through to the default strings
+            // when nothing has been written there.
+            let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+                ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            appGroupUrl = base.appendingPathComponent("telegram-app-group")
         }
         
         let rootPath = rootPathForBasePath(appGroupUrl.path)

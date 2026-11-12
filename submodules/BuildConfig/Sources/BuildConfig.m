@@ -259,6 +259,11 @@ API_AVAILABLE(ios(10))
     };
     SecKeyRef privateKey = NULL;
     OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)query, (CFTypeRef *)&privateKey);
+    if (status == errSecMissingEntitlement) {
+        NSMutableDictionary *fallback = [query mutableCopy];
+        [fallback removeObjectForKey:(id)kSecAttrAccessGroup];
+        status = SecItemCopyMatching((__bridge CFDictionaryRef)fallback, (CFTypeRef *)&privateKey);
+    }
     if (status != errSecSuccess) {
         return nil;
     }
@@ -299,7 +304,12 @@ API_AVAILABLE(ios(10))
         (id)kSecAttrAccessGroup: (id)accessGroup
     };
     OSStatus status = SecItemDelete((__bridge CFDictionaryRef)query);
-    if (status != errSecSuccess) {
+    if (status == errSecMissingEntitlement) {
+        NSMutableDictionary *fallback = [query mutableCopy];
+        [fallback removeObjectForKey:(id)kSecAttrAccessGroup];
+        status = SecItemDelete((__bridge CFDictionaryRef)fallback);
+    }
+    if (status != errSecSuccess && status != errSecItemNotFound) {
         return false;
     }
     return true;
@@ -335,11 +345,24 @@ API_AVAILABLE(ios(10))
     CFErrorRef error = NULL;
     SecKeyRef privateKey = SecKeyCreateRandomKey((__bridge CFDictionaryRef)attributes, &error);
     if (!privateKey) {
+        NSError *err = error ? CFBridgingRelease(error) : nil;
+        error = NULL;
+        if (err != nil && err.code == errSecMissingEntitlement) {
+            NSMutableDictionary *fallback = [attributes mutableCopy];
+            NSMutableDictionary *privateAttrs = [fallback[(id)kSecPrivateKeyAttrs] mutableCopy];
+            [privateAttrs removeObjectForKey:(id)kSecAttrAccessGroup];
+            fallback[(id)kSecPrivateKeyAttrs] = privateAttrs;
+            privateKey = SecKeyCreateRandomKey((__bridge CFDictionaryRef)fallback, &error);
+        }
+    }
+    if (!privateKey) {
         if (access) {
             CFRelease(access);
         }
         
-        __unused NSError *err = CFBridgingRelease(error);
+        if (error) {
+            CFRelease(error);
+        }
         return nil;
     }
     

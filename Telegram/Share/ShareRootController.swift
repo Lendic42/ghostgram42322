@@ -37,11 +37,7 @@ class ShareRootController: UIViewController {
             
             let appGroupName = "group.\(baseAppBundleId)"
             try! PasscodeEnvironment.shared.configure(PasscodeConfiguration(appGroupIdentifier: appGroupName, processRole: .appExtension))
-            let maybeAppGroupUrl = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupName)
-            
-            guard let appGroupUrl = maybeAppGroupUrl else {
-                return
-            }
+            let appGroupUrl = resolvedAppGroupContainerURL(groupIdentifier: appGroupName)
             
             let rootPath = appGroupUrl.path + "/telegram-data"
             

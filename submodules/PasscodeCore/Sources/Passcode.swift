@@ -111,6 +111,38 @@ protocol PasscodeStorage {
     func remove(_ account: String) throws
 }
 
+/// Whether `group` can be named in `kSecAttrAccessGroup`. Cached: the probe is a keychain
+/// round trip and every credential read asks.
+enum PasscodeKeychainGroupProbe {
+    private static let lock = NSLock()
+    private static var cache: [String: Bool] = [:]
+
+    static func isUsable(_ group: String) -> Bool {
+        self.lock.lock()
+        if let cached = self.cache[group] {
+            self.lock.unlock()
+            return cached
+        }
+        self.lock.unlock()
+
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: "org.telegram.passcode.group-probe",
+            kSecAttrService as String: "org.telegram.passcode.group-probe",
+            kSecAttrAccessGroup as String: group,
+            kSecReturnAttributes as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        let usable = status != errSecMissingEntitlement
+        self.lock.lock()
+        self.cache[group] = usable
+        self.lock.unlock()
+        return usable
+    }
+}
+
 @available(macOS 10.15, *)
 final class PasscodeKeychain: PasscodeStorage {
     private let environment: PasscodeEnvironment
@@ -124,7 +156,13 @@ final class PasscodeKeychain: PasscodeStorage {
             kSecAttrSynchronizable as String: false
         ]
         #if !os(macOS)
-        query[kSecAttrAccessGroup as String] = try account.hasPrefix("biometric.") ? self.environment.privateAccessGroup() : self.environment.sharedAccessGroup()
+        // A free Apple ID profile has no keychain-access-groups entry for `group.<bundle>`.
+        // Asking for that group makes every SecItem call fail, so omit it and use the
+        // app's default access group.
+        let requested = try? (account.hasPrefix("biometric.") ? self.environment.privateAccessGroup() : self.environment.sharedAccessGroup())
+        if let requested, PasscodeKeychainGroupProbe.isUsable(requested) {
+            query[kSecAttrAccessGroup as String] = requested
+        }
         #endif
         return query
     }

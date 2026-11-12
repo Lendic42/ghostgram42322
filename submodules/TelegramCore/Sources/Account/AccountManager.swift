@@ -259,6 +259,31 @@ public func initializeAccountManagement() {
     let _ = declaredEncodables
 }
 
+/// Directory name under Application Support used when the process has no app-group entitlement
+/// (a free Apple ID sideload strips the group). The main app and an extension each resolve this
+/// inside their own sandbox; they do not see each other's fallback.
+public let sideloadAppGroupDirectoryName = "telegram-app-group"
+
+public func storageContainerURL(appGroupContainer: URL?, applicationSupport: URL) -> URL {
+    if let appGroupContainer {
+        return appGroupContainer
+    }
+    return applicationSupport.appendingPathComponent(sideloadAppGroupDirectoryName)
+}
+
+/// The shared app-group container, or Application Support/`telegram-app-group` when
+/// `containerURL(forSecurityApplicationGroupIdentifier:)` is nil.
+public func resolvedAppGroupContainerURL(groupIdentifier: String) -> URL {
+    let groupContainer = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: groupIdentifier)
+    let applicationSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+        ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+    let url = storageContainerURL(appGroupContainer: groupContainer, applicationSupport: applicationSupport)
+    if groupContainer == nil {
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+    }
+    return url
+}
+
 public func rootPathForBasePath(_ appGroupPath: String) -> String {
     return appGroupPath + "/telegram-data"
 }

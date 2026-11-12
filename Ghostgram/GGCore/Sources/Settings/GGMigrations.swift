@@ -222,7 +222,12 @@ public struct GGLegacyDefaults {
         if groupIdentifier == nil, let bundleIdentifier = Bundle.main.bundleIdentifier {
             groupIdentifier = "group.\(bundleIdentifier)"
         }
-        if let groupIdentifier = groupIdentifier, let group = UserDefaults(suiteName: groupIdentifier) {
+        // UserDefaults(suiteName:) for an app group the process is not entitled to does not
+        // return nil on every OS, and synchronizing that suite can stall launch. Skip it when
+        // the group container itself is missing.
+        if let groupIdentifier = groupIdentifier,
+           FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: groupIdentifier) != nil,
+           let group = UserDefaults(suiteName: groupIdentifier) {
             stores.append(group)
         }
         return GGLegacyDefaults(stores: stores)
