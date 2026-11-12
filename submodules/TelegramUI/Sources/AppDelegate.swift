@@ -586,7 +586,10 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
         
         let buildConfig = BuildConfig(baseAppBundleId: baseAppBundleId)
         self.buildConfig = buildConfig
-        let signatureDict = BuildConfigExtra.signatureDict()
+        // A free Apple ID signature is not Telegram's. Sending it with the official api_id makes
+        // the servers drop the session with no error, which the login screen reports as a network
+        // failure. The App Store build still sends the signature.
+        let signatureDict: NSDictionary? = buildConfig.isAppStoreBuild ? BuildConfigExtra.signatureDict() : nil
         
         let apiId: Int32 = buildConfig.apiId
         let apiHash: String = buildConfig.apiHash
@@ -790,6 +793,7 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
         let logsPath = rootPath + "/logs/app-logs"
         let _ = try? FileManager.default.createDirectory(atPath: logsPath, withIntermediateDirectories: true, attributes: nil)
         Logger.setSharedLogger(Logger(rootPath: rootPath, basePath: logsPath))
+        Logger.shared.log("App", "apiId=\(buildConfig.apiId) appStore=\(buildConfig.isAppStoreBuild) storage=\(appGroupUrl.path)")
 
         setManagedAudioSessionLogger({ s in
             Logger.shared.log("ManagedAudioSession", s)

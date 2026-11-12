@@ -397,6 +397,10 @@ API_AVAILABLE(ios(10))
 + (DeviceSpecificEncryptionParameters * _Nonnull)deviceSpecificEncryptionParameters:(NSString * _Nonnull)rootPath baseAppBundleId:(NSString * _Nonnull)baseAppBundleId {
     CFAbsoluteTime startTime = CFAbsoluteTimeGetCurrent();
     
+    // The sideload fallback directory is created by the caller, but telegram-data itself
+    // may not exist yet. A failed write here is silent and the next launch generates a
+    // different database key.
+    [[NSFileManager defaultManager] createDirectoryAtPath:rootPath withIntermediateDirectories:YES attributes:nil error:nil];
     NSString *filePath = [rootPath stringByAppendingPathComponent:@".tempkey"];
     //NSString *encryptedPath = [rootPath stringByAppendingPathComponent:@".tempkeyEncrypted"];
     
@@ -446,7 +450,9 @@ API_AVAILABLE(ios(10))
         resultData = randomData;
         // Atomic: a reader that does not take the lock (older builds) must never see a
         // torn write, which is indistinguishable from "no key yet".
-        [resultData writeToFile:filePath atomically:true];
+        if (![resultData writeToFile:filePath atomically:true]) {
+            NSLog(@"deviceSpecificEncryptionParameters: failed to persist the database key at %@", filePath);
+        }
     }
     
     if (lockFd >= 0) {

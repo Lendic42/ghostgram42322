@@ -258,7 +258,13 @@ public func sendAuthorizationCode(accountManager: AccountManager<TelegramAccount
                 return .fail(.generic(info: (Int(error.errorCode), error.errorDescription)))
             }
         }
-        |> timeout(20.0, queue: Queue.concurrentDefaultQueue(), alternate: .fail(.timeout))
+        |> timeout(45.0, queue: Queue.concurrentDefaultQueue(), alternate: Signal { subscriber in
+            // A cold handshake through a VPN often needs a second address after the 12s socket
+            // timeout. 20s reported that as "no internet" before the request could finish.
+            Logger.shared.log("Auth", "sendCode timed out (apiId=\(apiId))")
+            subscriber.putError(.timeout)
+            return EmptyDisposable
+        })
         
         return codeAndAccount
         |> mapToSignal { result, account -> Signal<SendAuthorizationCodeResult, AuthorizationCodeRequestError> in
