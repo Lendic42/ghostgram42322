@@ -589,7 +589,7 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
         // A free Apple ID signature is not Telegram's. Sending it with the official api_id makes
         // the servers drop the session with no error, which the login screen reports as a network
         // failure. The App Store build still sends the signature.
-        let signatureDict: NSDictionary? = buildConfig.isAppStoreBuild ? BuildConfigExtra.signatureDict() : nil
+        let signatureDict: [AnyHashable: Any]? = buildConfig.isAppStoreBuild ? BuildConfigExtra.signatureDict() : nil
         
         let apiId: Int32 = buildConfig.apiId
         let apiHash: String = buildConfig.apiHash
